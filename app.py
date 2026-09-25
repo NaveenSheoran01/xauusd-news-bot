@@ -110,6 +110,9 @@ def self_ping_job():
         print(f"[INFO] Self-ping OK: {r.status_code}")
     except Exception as e:
         print("[WARN] Self-ping failed:", e)
+
+
+def refresh_calendar_cache():
     """Runs in the background every 5 min. Updates calendar_cache in place."""
     global calendar_cache
     events = fetch_calendar()
