@@ -84,7 +84,6 @@ def is_gold_relevant(event: dict) -> bool:
 def parse_event_time(event: dict):
     """ForexFactory feed gives a date string; parse to timezone-aware datetime (UTC)."""
     try:
-        # Example format: "2025-01-10T13:30:00-05:00"
         raw = event.get("date")
         if not raw:
             return None
@@ -95,13 +94,11 @@ def parse_event_time(event: dict):
 
 
 # ============================ SELF-PING (keeps Render awake automatically) ============================
-# Render provides this env var automatically on deployed services.
 SELF_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
 def self_ping_job():
     """Pings our own /health endpoint every 10 min so Render's free tier
-    never sees 15 min of inactivity and never puts the service to sleep.
-    This replaces the need to manually set up an external UptimeRobot monitor."""
+    never sees 15 min of inactivity and never puts the service to sleep."""
     if not SELF_URL:
         print("[WARN] RENDER_EXTERNAL_URL not set, skipping self-ping (set it manually if needed)")
         return
@@ -124,8 +121,7 @@ def refresh_calendar_cache():
 def get_upcoming_gold_news(within_minutes: int):
     """
     Return list of (event, minutes_until, event_time) for relevant news happening soon.
-    Reads from the in-memory cache only — NO live HTTP call here, so this is
-    near-instant and safe to call inside the webhook handler.
+    Reads from the in-memory cache only.
     """
     with calendar_cache_lock:
         events = list(calendar_cache)
@@ -168,7 +164,6 @@ scheduler.add_job(check_news_job, "interval", minutes=5)
 scheduler.add_job(self_ping_job, "interval", minutes=10)
 scheduler.start()
 
-# Pre-load cache and do first self-ping immediately at startup (threaded so app boots instantly)
 threading.Thread(target=refresh_calendar_cache, daemon=True).start()
 threading.Thread(target=self_ping_job, daemon=True).start()
 
@@ -176,24 +171,6 @@ threading.Thread(target=self_ping_job, daemon=True).start()
 # ============================ WEBHOOK FROM TRADINGVIEW ============================
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    """
-    Single unified webhook for all signals from the Pine Script's alert() calls:
-
-    Zone signal:
-        {"type":"buyer_zone","signal":"zone","level":"2650.2","price":"2651.0"}
-        {"type":"seller_zone","signal":"zone","level":"2670.0","price":"2669.5"}
-
-    Delta threshold signal:
-        {"type":"buyer_zone","signal":"delta_buy","delta":"620","price":"2651.0"}
-        {"type":"seller_zone","signal":"delta_sell","delta":"-610","price":"2669.5"}
-
-    Instant news reaction signal (fires the moment price moves past your threshold after news):
-        {"type":"news_reaction","signal":"news_buy","bias":"positive","move":"4.2","price":"2655.0","delta":"340"}
-        {"type":"news_reaction","signal":"news_sell","bias":"negative","move":"-5.1","price":"2645.0","delta":"-410"}
-
-    Configure this in TradingView Alert -> Webhook URL:
-        https://YOUR-RENDER-URL/webhook
-    """
     t0 = time.time()
     data = request.get_json(force=True, silent=True) or {}
     signal = data.get("signal", "unknown")
@@ -226,14 +203,11 @@ def webhook():
     else:
         msg = f"Signal received — XAU/USD\nRaw data: {data}"
 
-    # Reads from in-memory cache only — no network call here, so this stays fast
     near_news = get_upcoming_gold_news(NEWS_WARNING_WINDOW)
     if near_news:
         ev, mins_left, _ = near_news[0]
         msg += f"\n\n🔔 <b>{ev.get('title')}</b> news in ~{int(mins_left)} min — volatility likely."
 
-    # Send to Telegram in a background thread so the webhook returns to
-    # TradingView immediately without waiting for Telegram's response
     threading.Thread(target=send_telegram, args=(msg,), daemon=True).start()
 
     elapsed_ms = int((time.time() - t0) * 1000)
